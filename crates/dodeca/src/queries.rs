@@ -8,7 +8,9 @@ use crate::db::{
 };
 use picante::PicanteResult;
 
-use crate::cells::{MarkdownParseError, parse_and_render_markdown_cell};
+use crate::cells::{
+    MarkdownParseError, parse_and_render_asciidoc_cell, parse_and_render_markdown_cell,
+};
 use crate::image::{self, InputFormat, OutputFormat, add_width_suffix};
 use crate::types::{HtmlBody, Route, SassContent, StaticPath, TemplateContent, Title};
 use crate::url_rewrite::{rewrite_string_literals_in_js, rewrite_urls_in_css};
@@ -331,51 +333,47 @@ pub type ParseFileResult = Result<ParsedData, crate::cells::MarkdownParseError>;
 #[picante::tracked]
 #[tracing::instrument(skip_all, name = "parse_file", fields(path))]
 pub async fn parse_file<DB: Db>(db: &DB, source: SourceFile) -> PicanteResult<ParseFileResult> {
-    use cell_markdown_proto::ParseResult;
-
     let content = source.content(db)?;
     let path = source.path(db)?;
     let last_modified = source.last_modified(db)?;
 
     tracing::Span::current().record("path", path.as_str());
-    tracing::debug!(path = %path, "Parsing markdown");
 
-    let source_maps = MarkdownRenderSettings::source_maps(db)?.unwrap_or(false);
+    if path.is_asciidoc() {
+        parse_file_asciidoc(path, content, last_modified).await
+    } else {
+        parse_file_markdown(db, path, content, last_modified).await
+    }
+}
 
-    // Use the markdown cell to parse frontmatter and render markdown
+async fn parse_file_asciidoc(
+    path: std::sync::Arc<crate::types::SourcePath>,
+    content: crate::types::SourceContent,
+    last_modified: i64,
+) -> PicanteResult<ParseFileResult> {
+    use cell_asciidoc_proto::ParseResult;
+
+    tracing::debug!(path = %path, "Parsing asciidoc");
+
     let parse_result =
-        match parse_and_render_markdown_cell(path.as_str(), content.as_str(), source_maps).await {
+        match parse_and_render_asciidoc_cell(path.as_str(), content.as_str()).await {
             Ok(p) => p,
             Err(e) => return Ok(Err(e)),
         };
 
-    // Handle the enum result
-    let (frontmatter, html_output, headings_raw, reqs_raw, head_injections, source_map_raw) =
-        match parse_result {
-            ParseResult::Success {
-                frontmatter,
-                html,
-                headings,
-                reqs,
-                head_injections,
-                source_map,
-            } => (
-                frontmatter,
-                html,
-                headings,
-                reqs,
-                head_injections,
-                source_map,
-            ),
-            ParseResult::Error { message } => {
-                return Ok(Err(MarkdownParseError { message }));
-            }
-        };
+    let (frontmatter, html_output, headings_raw, head_injections) = match parse_result {
+        ParseResult::Success {
+            frontmatter,
+            html,
+            headings,
+            head_injections,
+        } => (frontmatter, html, headings, head_injections),
+        ParseResult::Error { message } => {
+            return Ok(Err(MarkdownParseError { message }));
+        }
+    };
 
-    // Convert frontmatter from cell type
     let extra: Value = frontmatter.extra.clone();
-
-    // Convert headings from cell type to internal type
     let headings: Vec<Heading> = headings_raw
         .into_iter()
         .map(|h| Heading {
@@ -385,7 +383,75 @@ pub async fn parse_file<DB: Db>(db: &DB, source: SourceFile) -> PicanteResult<Pa
         })
         .collect();
 
-    // Convert rules from cell type to internal type
+    let body_html = HtmlBody::new(html_output);
+    let is_section = path.is_section_index();
+    let route = path.to_route();
+    let title = if frontmatter.title.trim().is_empty() {
+        default_title_from_source_path(path.as_str())
+    } else {
+        frontmatter.title
+    };
+
+    Ok(Ok(ParsedData {
+        source_path: (*path).clone(),
+        route,
+        title: Title::new(title),
+        description: frontmatter.description,
+        weight: frontmatter.weight,
+        body_html,
+        is_section,
+        headings,
+        reqs: Vec::new(),
+        source_map: crate::db::SourceMap::default(),
+        head_injections,
+        last_updated: last_modified,
+        extra,
+        template: frontmatter.template,
+    }))
+}
+
+async fn parse_file_markdown<DB: Db>(
+    db: &DB,
+    path: std::sync::Arc<crate::types::SourcePath>,
+    content: crate::types::SourceContent,
+    last_modified: i64,
+) -> PicanteResult<ParseFileResult> {
+    use cell_markdown_proto::ParseResult;
+
+    tracing::debug!(path = %path, "Parsing markdown");
+
+    let source_maps = MarkdownRenderSettings::source_maps(db)?.unwrap_or(false);
+
+    let parse_result =
+        match parse_and_render_markdown_cell(path.as_str(), content.as_str(), source_maps).await {
+            Ok(p) => p,
+            Err(e) => return Ok(Err(e)),
+        };
+
+    let (frontmatter, html_output, headings_raw, reqs_raw, head_injections, source_map_raw) =
+        match parse_result {
+            ParseResult::Success {
+                frontmatter,
+                html,
+                headings,
+                reqs,
+                head_injections,
+                source_map,
+            } => (frontmatter, html, headings, reqs, head_injections, source_map),
+            ParseResult::Error { message } => {
+                return Ok(Err(MarkdownParseError { message }));
+            }
+        };
+
+    let extra: Value = frontmatter.extra.clone();
+    let headings: Vec<Heading> = headings_raw
+        .into_iter()
+        .map(|h| Heading {
+            title: h.title,
+            id: h.id,
+            level: h.level,
+        })
+        .collect();
     let reqs: Vec<ReqDefinition> = reqs_raw
         .into_iter()
         .map(|r| ReqDefinition {
@@ -396,13 +462,8 @@ pub async fn parse_file<DB: Db>(db: &DB, source: SourceFile) -> PicanteResult<Pa
     let source_map = convert_source_map(*source_map_raw);
 
     let body_html = HtmlBody::new(html_output);
-
-    // Determine if this is a section (_index.md)
     let is_section = path.is_section_index();
-
-    // Compute URL route
     let route = path.to_route();
-
     let title = if frontmatter.title.trim().is_empty() {
         default_title_from_source_path(path.as_str())
     } else {
@@ -428,7 +489,10 @@ pub async fn parse_file<DB: Db>(db: &DB, source: SourceFile) -> PicanteResult<Pa
 }
 
 pub fn default_title_from_source_path(path: &str) -> String {
-    let path = path.strip_suffix(".md").unwrap_or(path);
+    let path = path
+        .strip_suffix(".md")
+        .or_else(|| path.strip_suffix(".adoc"))
+        .unwrap_or(path);
     let slug = if path == "_index" {
         "home"
     } else if let Some(section_path) = path.strip_suffix("/_index") {

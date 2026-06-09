@@ -1,0 +1,12 @@
+[package]
+name = "cell-asciidoc-proto"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+facet.workspace = true
+facet-value.workspace = true
+vox.workspace = true
+
+[dev-dependencies]
+facet-postcard.workspace = true

@@ -9,6 +9,49 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f82509a4fd112244705d14c6d5780862ad279ca76ae8288ff8415fbc717e69ef"
 
 [[package]]
+name = "acdc-converters-core"
+version = "0.1.0"
+source = "git+https://github.com/nlopes/acdc?rev=3fa5ff2#3fa5ff2cb9d2c57be32203add39302fb217a60ea"
+dependencies = [
+ "acdc-parser",
+ "bitflags 2.11.1",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
+name = "acdc-converters-html"
+version = "0.1.0"
+source = "git+https://github.com/nlopes/acdc?rev=3fa5ff2#3fa5ff2cb9d2c57be32203add39302fb217a60ea"
+dependencies = [
+ "acdc-converters-core",
+ "acdc-parser",
+ "chrono",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
+name = "acdc-parser"
+version = "0.9.0"
+source = "git+https://github.com/nlopes/acdc?rev=3fa5ff2#3fa5ff2cb9d2c57be32203add39302fb217a60ea"
+dependencies = [
+ "bitflags 2.11.1",
+ "bumpalo",
+ "csv",
+ "encoding_rs",
+ "evalexpr",
+ "peg",
+ "rustc-hash 2.1.2",
+ "self_cell",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "addr2line"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1476,6 +1519,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "cell-asciidoc"
+version = "0.1.0"
+dependencies = [
+ "acdc-converters-core",
+ "acdc-converters-html",
+ "acdc-parser",
+ "cell-asciidoc-proto",
+ "dodeca-cell-runtime",
+ "facet-value",
+ "tracing",
+]
+
+[[package]]
+name = "cell-asciidoc-proto"
+version = "0.1.0"
+dependencies = [
+ "facet",
+ "facet-postcard",
+ "facet-value",
+ "vox 0.8.1",
+]
+
+[[package]]
 name = "cell-code-execution"
 version = "0.6.1"
 dependencies = [
@@ -1942,7 +2008,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c673075a2e0e5f4a1dde27ce9dee1ea4558c7ffe648f576438a20ca1d2acc4b0"
 dependencies = [
  "iana-time-zone",
+ "js-sys",
  "num-traits",
+ "wasm-bindgen",
  "windows-link",
 ]
 
@@ -2539,6 +2607,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "csv"
+version = "1.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "52cd9d68cf7efc6ddfaaee42e7288d3a99d613d4b50f76ce9827ae0c6e14f938"
+dependencies = [
+ "csv-core",
+ "itoa",
+ "ryu",
+ "serde_core",
+]
+
+[[package]]
+name = "csv-core"
+version = "0.1.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "704a3c26996a80471189265814dbc2c257598b96b8a7feae2d31ace646bb9782"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "ctor"
 version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2826,6 +2915,7 @@ dependencies = [
  "arborium-theme",
  "ariadne 0.5.1",
  "camino",
+ "cell-asciidoc-proto",
  "cell-code-execution-proto",
  "cell-css-proto",
  "cell-data-proto",
@@ -3122,6 +3212,12 @@ checksum = "f1a05365e3b1c6d1650318537c7460c6923f1abdd272ad6842baa2b509957a06"
 dependencies = [
  "num-traits",
 ]
+
+[[package]]
+name = "evalexpr"
+version = "13.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "25929004897f2bbab309121a60400d36992f6d911d09baa6c172f6cc55706601"
 
 [[package]]
 name = "event-listener"
@@ -6390,6 +6486,33 @@ name = "pathdiff"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df94ce210e5bc13cb6651479fa48d14f601d9858cfe0467f43ae157023b938d3"
+
+[[package]]
+name = "peg"
+version = "0.8.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0aad070be5b63aa72103f2fcdd70a83adbd5e90112ce5b574171ff1c65501773"
+dependencies = [
+ "peg-macros",
+ "peg-runtime",
+]
+
+[[package]]
+name = "peg-macros"
+version = "0.8.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ddd8ef6825cae95355031ae26a99b616a2a21f22ba2de0197c43dfb05acbe7ee"
+dependencies = [
+ "peg-runtime",
+ "proc-macro2",
+ "quote",
+]
+
+[[package]]
+name = "peg-runtime"
+version = "0.8.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7011d97b484a5ebdc4b1fdb3b12d5e4bbbea56e9d22b688f2e79e04b65a7d8a6"
 
 [[package]]
 name = "percent-encoding"

@@ -180,6 +180,7 @@ rust-version = "1.92"
 # No [patch.crates-io] for facet: everything is on crates.io facet 0.46.x now.
 
 [patch.crates-io]
+acdc-parser = { git = "https://github.com/nlopes/acdc", rev = "3fa5ff2" }
 vox = { git = "https://github.com/bearcove/vox.git", branch = "dodeca-vox-core-0.8.1" }
 vox-core = { git = "https://github.com/bearcove/vox.git", branch = "dodeca-vox-core-0.8.1" }
 vox-fdpass = { git = "https://github.com/bearcove/vox.git", branch = "dodeca-vox-core-0.8.1" }

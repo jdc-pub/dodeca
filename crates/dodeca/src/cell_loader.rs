@@ -82,6 +82,7 @@ host_cell_endpoints! {
     ep_vite           => "vite",           vox_ffi_host_vite_v1;
     ep_term           => "term",           vox_ffi_host_term_v1;
     ep_tui            => "tui",            vox_ffi_host_tui_v1;
+    ep_asciidoc       => "asciidoc",       vox_ffi_host_asciidoc_v1;
 }
 
 /// The host-side acceptor: routes the cell's reverse virtual connections to the

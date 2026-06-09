@@ -142,7 +142,12 @@ pub fn load_source_files(
             .build()
             .filter_map(|e| e.ok())
             .filter(|e| e.file_type().map(|ft| ft.is_file()).unwrap_or(false))
-            .filter(|e| e.path().extension().map(|ext| ext == "md").unwrap_or(false))
+            .filter(|e| {
+                e.path()
+                    .extension()
+                    .map(|ext| ext == "md" || ext == "adoc")
+                    .unwrap_or(false)
+            })
             .filter_map(|e| Utf8PathBuf::from_path_buf(e.into_path()).ok())
             .collect();
         for path in md_files {

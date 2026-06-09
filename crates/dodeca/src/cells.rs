@@ -30,6 +30,7 @@ use cell_image_proto::{ImageProcessorClient, ImageResult, ResizeInput, Thumbhash
 use cell_js_proto::{JsProcessorClient, JsRewriteInput};
 use cell_jxl_proto::{JXLEncodeInput, JXLProcessorClient, JXLResult};
 use cell_lifecycle_proto::CellLifecycle;
+use cell_asciidoc_proto::AsciiDocProcessorClient;
 use cell_linkcheck_proto::{LinkCheckInput, LinkCheckResult, LinkCheckerClient, LinkStatus};
 use cell_markdown_proto::MarkdownProcessorClient;
 use cell_sass_proto::{SassCompilerClient, SassResult};
@@ -474,6 +475,7 @@ cell_client_accessor!(jxl_cell, "jxl", JXLProcessorClient);
 
 // Text processing
 cell_client_accessor!(markdown_cell, "markdown", MarkdownProcessorClient);
+cell_client_accessor!(asciidoc_cell, "asciidoc", AsciiDocProcessorClient);
 cell_client_accessor!(html_cell, "html", HtmlProcessorClient);
 cell_client_accessor!(css_cell, "css", CssProcessorClient);
 cell_client_accessor!(sass_cell, "sass", SassCompilerClient);
@@ -686,6 +688,58 @@ pub async fn parse_and_render_markdown_cell(
             tracing::error!(
                 rpc_id,
                 cell = "markdown",
+                method = "parse_and_render",
+                elapsed_ms = started_at.elapsed().as_millis(),
+                error = ?e,
+                "cell rpc failed"
+            );
+            MarkdownParseError {
+                message: format!("RPC error: {:?}", e),
+            }
+        })
+}
+
+pub async fn parse_and_render_asciidoc_cell(
+    source_path: &str,
+    content: &str,
+) -> Result<cell_asciidoc_proto::ParseResult, MarkdownParseError> {
+    let rpc_id = next_cell_rpc_id();
+    let started_at = Instant::now();
+    tracing::debug!(
+        rpc_id,
+        cell = "asciidoc",
+        method = "parse_and_render",
+        source_path,
+        source_len = content.len(),
+        "cell rpc client lookup starting"
+    );
+    let client = asciidoc_cell().await.ok_or_else(|| MarkdownParseError {
+        message: "AsciiDoc cell not available".to_string(),
+    })?;
+    tracing::debug!(
+        rpc_id,
+        cell = "asciidoc",
+        method = "parse_and_render",
+        elapsed_ms = started_at.elapsed().as_millis(),
+        "cell rpc dispatch starting"
+    );
+    client
+        .parse_and_render(source_path.to_string(), content.to_string())
+        .await
+        .map(|result| {
+            tracing::debug!(
+                rpc_id,
+                cell = "asciidoc",
+                method = "parse_and_render",
+                elapsed_ms = started_at.elapsed().as_millis(),
+                "cell rpc complete"
+            );
+            result
+        })
+        .map_err(|e| {
+            tracing::error!(
+                rpc_id,
+                cell = "asciidoc",
                 method = "parse_and_render",
                 elapsed_ms = started_at.elapsed().as_millis(),
                 error = ?e,

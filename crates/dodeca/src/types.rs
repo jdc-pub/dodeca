@@ -138,9 +138,13 @@ impl RouteRef {
 }
 
 impl SourcePath {
-    /// Check if this is a section index file (_index.md)
+    /// Check if this is a section index file (_index.md or _index.adoc)
     pub fn is_section_index(&self) -> bool {
-        self.as_str().ends_with("_index.md")
+        self.as_str().ends_with("_index.md") || self.as_str().ends_with("_index.adoc")
+    }
+
+    pub fn is_asciidoc(&self) -> bool {
+        self.as_str().ends_with(".adoc")
     }
 
     /// Convert source path to URL route.
@@ -150,9 +154,11 @@ impl SourcePath {
     pub fn to_route(&self) -> Route {
         let mut path = self.as_str().to_string();
 
-        // Remove .md extension
+        // Remove .md or .adoc extension
         if path.ends_with(".md") {
             path = path[..path.len() - 3].to_string();
+        } else if path.ends_with(".adoc") {
+            path = path[..path.len() - 5].to_string();
         }
 
         // Handle _index -> parent directory
@@ -193,6 +199,28 @@ mod tests {
             SourcePath::from_static("learn/page.md").to_route(),
             Route::from_static("/learn/page")
         );
+        // AsciiDoc paths
+        assert_eq!(
+            SourcePath::from_static("learn/_index.adoc").to_route(),
+            Route::from_static("/learn")
+        );
+        assert_eq!(
+            SourcePath::from_static("_index.adoc").to_route(),
+            Route::root()
+        );
+        assert_eq!(
+            SourcePath::from_static("learn/page.adoc").to_route(),
+            Route::from_static("/learn/page")
+        );
+    }
+
+    #[test]
+    fn test_asciidoc_detection() {
+        assert!(SourcePath::from_static("page.adoc").is_asciidoc());
+        assert!(!SourcePath::from_static("page.md").is_asciidoc());
+        assert!(SourcePath::from_static("_index.adoc").is_section_index());
+        assert!(SourcePath::from_static("_index.md").is_section_index());
+        assert!(!SourcePath::from_static("page.adoc").is_section_index());
     }
 
     #[test]
