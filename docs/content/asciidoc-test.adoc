@@ -1,0 +1,49 @@
+= AsciiDoc Test Page
+:description: A test page verifying AsciiDoc support in dodeca
+:weight: 99
+
+This page verifies that `.adoc` files are parsed and rendered correctly.
+
+== Introduction
+
+AsciiDoc is a lightweight markup language with rich support for technical
+documentation. Dodeca processes `.adoc` files via the `cell-asciidoc` cell,
+which uses https://github.com/nlopes/acdc[acdc-parser] for parsing and
+`acdc-converters-html` for rendering.
+
+== Features Tested
+
+=== Headings
+
+This page includes three heading levels to verify TOC generation.
+
+=== Lists
+
+Unordered list:
+
+* Item one
+* Item two
+* Item three
+
+Ordered list:
+
+. First step
+. Second step
+. Third step
+
+=== Source Code Block
+
+[source,rust]
+----
+fn hello() -> &'static str {
+    "hello from AsciiDoc"
+}
+----
+
+=== Inline Formatting
+
+Text can be *bold*, _italic_, or `monospace`.
+
+== Conclusion
+
+If you can read this page at `/asciidoc-test`, AsciiDoc support is working.
