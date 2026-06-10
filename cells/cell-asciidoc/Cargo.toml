@@ -17,3 +17,6 @@ acdc-converters-html = { git = "https://github.com/nlopes/acdc", rev = "3fa5ff2"
 acdc-converters-core = { git = "https://github.com/nlopes/acdc", rev = "3fa5ff2" }
 facet-value.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }

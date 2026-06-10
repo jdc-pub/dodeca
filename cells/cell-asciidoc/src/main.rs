@@ -125,3 +125,73 @@ impl AsciiDocProcessor for AsciiDocProcessorImpl {
 dodeca_cell_runtime::declare_cell!("asciidoc", |_host| {
     AsciiDocProcessorDispatcher::new(AsciiDocProcessorImpl)
 });
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn render(content: &str) -> ParseResult {
+        AsciiDocProcessorImpl
+            .parse_and_render("test.adoc".to_string(), content.to_string())
+            .await
+    }
+
+    #[tokio::test]
+    async fn basic_render_produces_html() {
+        let result = render("= Hello\n\nSome text.\n").await;
+        let ParseResult::Success { html, frontmatter, .. } = result else {
+            panic!("expected Success");
+        };
+        assert_eq!(frontmatter.title, "Hello");
+        assert!(html.contains("Some text."), "html={html}");
+    }
+
+    #[tokio::test]
+    async fn embedded_html_has_no_doctype() {
+        let result = render("= Doc\n\nBody.\n").await;
+        let ParseResult::Success { html, .. } = result else {
+            panic!("expected Success");
+        };
+        assert!(!html.contains("<!DOCTYPE"), "should be embedded, not full page: {html}");
+        assert!(!html.contains("<html"), "should be embedded, not full page: {html}");
+    }
+
+    #[tokio::test]
+    async fn frontmatter_attributes_extracted() {
+        let content = "= My Page\n:weight: 7\n:description: A desc\n\nContent.\n";
+        let result = render(content).await;
+        let ParseResult::Success { frontmatter, .. } = result else {
+            panic!("expected Success");
+        };
+        assert_eq!(frontmatter.title, "My Page");
+        assert_eq!(frontmatter.weight, 7);
+        assert_eq!(frontmatter.description.as_deref(), Some("A desc"));
+    }
+
+#[tokio::test]
+    async fn headings_extracted() {
+        let content = "= Top\n\n== Introduction\n\nText.\n\n== Conclusion\n\nEnd.\n";
+        let result = render(content).await;
+        let ParseResult::Success { headings, .. } = result else {
+            panic!("expected Success");
+        };
+        assert_eq!(headings.len(), 2);
+        assert_eq!(headings[0].title, "Introduction");
+        assert_eq!(headings[0].level, 1);
+        assert_eq!(headings[1].title, "Conclusion");
+        assert_eq!(headings[1].level, 1);
+    }
+
+    #[tokio::test]
+    async fn nested_headings_have_correct_levels() {
+        let content = "= Doc\n\n== Section\n\n=== Subsection\n\nText.\n";
+        let result = render(content).await;
+        let ParseResult::Success { headings, .. } = result else {
+            panic!("expected Success");
+        };
+        // acdc uses 1-based levels relative to the doc title: == is level 1, === is level 2
+        let levels: Vec<u8> = headings.iter().map(|h| h.level).collect();
+        assert!(levels.contains(&1), "expected level 1 heading (==): {levels:?}");
+        assert!(levels.contains(&2), "expected level 2 heading (===): {levels:?}");
+    }
+}

@@ -1528,6 +1528,7 @@ dependencies = [
  "cell-asciidoc-proto",
  "dodeca-cell-runtime",
  "facet-value",
+ "tokio",
  "tracing",
 ]
 
