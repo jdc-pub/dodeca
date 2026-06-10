@@ -52,10 +52,38 @@ impl AsciiDocProcessor for AsciiDocProcessorImpl {
             .map(|s| s.into_owned());
 
         let mut extra = VObject::new();
-        let known = ["weight", "description", "template", "doctitle", "toc", "sectnums"];
+        // Scalar fields extracted above; skip them here.
+        let top_level_fields = ["weight", "template"];
+        // AsciiDoc predefined/built-in attributes from acdc-parser constants.rs.
+        // These must be filtered out of `extra` so only user-defined metadata appears.
+        const BUILTIN_ATTRS: &[&str] = &[
+            // Character replacements / intrinsic
+            "empty", "blank", "sp", "nbsp", "zwsp", "wj", "apos", "quot", "lsquo", "rsquo",
+            "ldquo", "rdquo", "deg", "plus", "brvbar", "vbar", "amp", "lt", "gt", "startsb",
+            "endsb", "caret", "asterisk", "tilde", "backslash", "backtick", "two-colons",
+            "two-semicolons", "cpp", "cxx", "pp",
+            // Admonition captions
+            "note-caption", "tip-caption", "important-caption", "caution-caption",
+            "warning-caption",
+            // Block captions
+            "example-caption", "figure-caption", "table-caption", "appendix-caption",
+            // Reference labels
+            "section-refsig", "chapter-refsig", "part-refsig", "appendix-refsig",
+            // UI labels
+            "toc-title", "version-label", "untitled-label", "last-update-label",
+            // Structural settings
+            "idprefix", "idseparator", "sectids", "sectnumlevels", "toclevels",
+            "toc", "sectnums",
+            // Attribute processing
+            "attribute-undefined", "attribute-missing",
+            // Author-derived (set by acdc from the :author: line)
+            "firstname", "lastname", "authorinitials", "authors", "authorcount",
+            // Document internals
+            "doctitle",
+        ];
         for (name, value) in doc.attributes.iter() {
             let n = name.as_ref();
-            if known.contains(&n) {
+            if top_level_fields.contains(&n) || BUILTIN_ATTRS.contains(&n) {
                 continue;
             }
             let v = match value {
@@ -154,6 +182,50 @@ mod tests {
         };
         assert!(!html.contains("<!DOCTYPE"), "should be embedded, not full page: {html}");
         assert!(!html.contains("<html"), "should be embedded, not full page: {html}");
+    }
+
+    #[tokio::test]
+    async fn description_is_in_extra() {
+        let content = "= My Page\n:description: A desc\n:date: 2026-01-01\n\nContent.\n";
+        let result = render(content).await;
+        let ParseResult::Success { frontmatter, .. } = result else {
+            panic!("expected Success");
+        };
+        use facet_value::DestructuredRef;
+        // description must be in extra so templates can access page.extra.description
+        let DestructuredRef::Object(obj) = frontmatter.extra.destructure_ref() else {
+            panic!("extra must be an object");
+        };
+        assert!(
+            obj.get("description").is_some(),
+            "description must be in extra"
+        );
+        // also still available as the top-level field for OG meta etc.
+        assert_eq!(frontmatter.description.as_deref(), Some("A desc"));
+    }
+
+    #[tokio::test]
+    async fn builtin_attrs_not_in_extra() {
+        let content = "= My Page\n:description: A desc\n:date: 2026-01-01\n:author: Jane Doe\n\nContent.\n";
+        let result = render(content).await;
+        let ParseResult::Success { frontmatter, .. } = result else {
+            panic!("expected Success");
+        };
+        use facet_value::DestructuredRef;
+        let DestructuredRef::Object(obj) = frontmatter.extra.destructure_ref() else {
+            panic!("extra must be an object");
+        };
+        // user-defined attrs must appear
+        assert!(obj.get("description").is_some(), "description missing");
+        assert!(obj.get("date").is_some(), "date missing");
+        assert!(obj.get("author").is_some(), "author missing");
+        // acdc-derived and built-in attrs must not appear
+        for builtin in &["note-caption", "toc-title", "firstname", "lastname", "authorinitials", "blank", "sp"] {
+            assert!(
+                obj.get(*builtin).is_none(),
+                "builtin attr {builtin:?} should not be in extra"
+            );
+        }
     }
 
     #[tokio::test]
