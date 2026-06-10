@@ -100,6 +100,7 @@ const COPY_BUTTON_STYLES: &str = r##"<style>
 .code-block:hover .copy-btn { opacity: 1; }
 .code-block .copy-btn:hover { background: rgba(80,80,95,0.95); }
 .code-block .copy-btn.copied { background: rgba(50,160,50,0.9); }
+pre.code-block { overflow-x: auto; }
 </style>"##;
 
 /// JavaScript for copy button functionality - uses event delegation for all copy buttons
@@ -1086,6 +1087,22 @@ mod tests {
     use crate::db::{
         CodeExecutionMetadata, CodeExecutionResult, DependencySourceInfo, ResolvedDependencyInfo,
     };
+
+    // When cell-html adds `code-block` class to a bare <pre> (AsciiDoc output),
+    // site CSS like `.code-block { overflow: hidden }` overrides `pre { overflow-x: auto }`.
+    // COPY_BUTTON_STYLES must explicitly restore overflow-x: auto on pre.code-block
+    // so horizontal scrolling works on AsciiDoc code blocks.
+    #[test]
+    fn copy_button_styles_restores_overflow_on_pre_code_block() {
+        assert!(
+            COPY_BUTTON_STYLES.contains("pre.code-block"),
+            "COPY_BUTTON_STYLES must include a pre.code-block rule"
+        );
+        assert!(
+            COPY_BUTTON_STYLES.contains("overflow-x"),
+            "COPY_BUTTON_STYLES must restore overflow-x for pre.code-block"
+        );
+    }
 
     fn make_test_result(
         code: &str,

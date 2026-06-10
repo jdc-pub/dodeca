@@ -145,7 +145,11 @@ impl AsciiDocProcessor for AsciiDocProcessorImpl {
             frontmatter,
             html,
             headings,
-            head_injections: Vec::new(),
+            head_injections: vec![
+                // AsciiDoc wraps list item content in <p> tags, adding unwanted
+                // bottom margin from site CSS `p { margin-bottom: ... }` rules.
+                r#"<style>li > p { margin-bottom: 0; }</style>"#.to_string(),
+            ],
         }
     }
 }
@@ -265,5 +269,24 @@ mod tests {
         let levels: Vec<u8> = headings.iter().map(|h| h.level).collect();
         assert!(levels.contains(&1), "expected level 1 heading (==): {levels:?}");
         assert!(levels.contains(&2), "expected level 2 heading (===): {levels:?}");
+    }
+
+    // AsciiDoc wraps list item content in <p> tags:
+    //   <li><p>text</p></li>
+    // Sites built for markdown expect bare <li>text</li>. Without normalisation,
+    // CSS like `p { margin-bottom: 1.25rem }` adds unwanted spacing inside each
+    // list item. head_injections must include a CSS rule to zero that out.
+    #[tokio::test]
+    async fn head_injections_normalize_li_paragraph_margin() {
+        let content = "= Doc\n\n. First item\n. Second item\n";
+        let result = render(content).await;
+        let ParseResult::Success { head_injections, .. } = result else {
+            panic!("expected Success");
+        };
+        let combined = head_injections.join("\n");
+        assert!(
+            combined.contains("li") && combined.contains("margin-bottom"),
+            "head_injections must normalize li > p margin; got: {combined:?}"
+        );
     }
 }
