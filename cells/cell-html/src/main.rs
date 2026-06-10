@@ -1505,6 +1505,14 @@ fn inject_code_buttons_in_doc(
                     let normalized = normalize_code_for_matching(&code_text);
 
                     ensure_position_relative(doc, node_id);
+                    // Add code-block class so CSS selectors (.code-block .copy-btn,
+                    // .code-block:hover .copy-btn) apply even when there is no wrapping div.
+                    // This covers AsciiDoc output where <pre> is not wrapped in .code-block.
+                    let existing = get_attr(doc, node_id, "class").unwrap_or_default();
+                    if !existing.split_whitespace().any(|c| c == "code-block") {
+                        let new_class = format!("{} code-block", existing).trim().to_string();
+                        set_attr(doc, node_id, "class", &new_class);
+                    }
 
                     // Create and append buttons
                     if let Some(meta) = code_metadata.get(&normalized) {
@@ -1735,6 +1743,29 @@ dodeca_cell_runtime::declare_cell!("html", |host| {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // AsciiDoc renders code blocks as:
+    //   <div class="listingblock"><div class="content"><pre class="highlight"><code>...</code></pre></div></div>
+    // The copy button ends up inside <pre>, so <pre> must have `code-block` class for the CSS
+    // selectors (.code-block .copy-btn, .code-block:hover .copy-btn) to apply.
+    #[test]
+    fn pre_with_code_child_gets_code_block_class() {
+        let html = r#"<html><head></head><body>
+            <div class="listingblock">
+              <div class="content">
+                <pre class="highlight"><code class="language-text">hello world</code></pre>
+              </div>
+            </div>
+        </body></html>"#;
+        let tendril = StrTendril::from(html);
+        let mut doc = hotmeal::parse(&tendril);
+        inject_code_buttons_in_doc(&mut doc, &HashMap::new());
+        let output = doc.to_html();
+        assert!(
+            output.contains(r#"class="highlight code-block""#) || output.contains(r#"class="code-block highlight""#),
+            "pre should have code-block class added; got: {output}"
+        );
+    }
 
     #[test]
     fn injects_vite_css_for_built_script_paths() {
