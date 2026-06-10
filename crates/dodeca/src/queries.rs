@@ -3155,6 +3155,35 @@ pub async fn check_external_url<DB: Db>(
 }
 
 #[cfg(test)]
+mod default_title_tests {
+    use super::default_title_from_source_path;
+
+    // The `.adoc` branch was added alongside Markdown's `.md` stripping. Without it,
+    // an AsciiDoc page with an empty header would title-case the trailing `.adoc`
+    // (e.g. "Git Jj.adoc" -> "Git Jj.adoc") instead of "Git Jj".
+    #[test]
+    fn strips_adoc_extension() {
+        assert_eq!(default_title_from_source_path("posts/git-jj.adoc"), "Git Jj");
+    }
+
+    #[test]
+    fn adoc_section_index_uses_parent_dir() {
+        assert_eq!(default_title_from_source_path("learn/_index.adoc"), "Learn");
+    }
+
+    #[test]
+    fn adoc_root_index_is_home() {
+        assert_eq!(default_title_from_source_path("_index.adoc"), "Home");
+    }
+
+    // Markdown behaviour must be unchanged by the AsciiDoc additions.
+    #[test]
+    fn still_strips_md_extension() {
+        assert_eq!(default_title_from_source_path("posts/git-jj.md"), "Git Jj");
+    }
+}
+
+#[cfg(test)]
 mod wiki_suffix_tests {
     use super::route_path_suffixes;
 
