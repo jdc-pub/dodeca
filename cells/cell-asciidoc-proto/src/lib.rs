@@ -21,6 +21,74 @@ pub struct Frontmatter {
     pub extra: Value,
 }
 
+/// A file shipped alongside the main document so the cell can resolve
+/// `include::target[]` directives without reading the host filesystem.
+/// `path` is content-dir-relative with `/` separators.
+#[derive(Debug, Clone, Facet)]
+pub struct IncludeFile {
+    pub path: String,
+    pub content: String,
+}
+
+// ============================================================================
+// Include target resolution
+//
+// Shared by the host (to decide which tracked files to ship and register as
+// build dependencies) and the cell (to refuse documents whose include
+// targets cannot be proven to stay inside the content directory). Keeping
+// both sides on one implementation means they can never disagree about
+// which targets are safe.
+// ============================================================================
+
+/// Extract raw `include::target[attrs]` targets from AsciiDoc source.
+/// Only unescaped directives at the start of a line count, matching the
+/// AsciiDoc preprocessor (a leading `\` escapes the directive).
+pub fn scan_include_targets(content: &str) -> Vec<&str> {
+    content
+        .lines()
+        .filter_map(|line| {
+            let rest = line.strip_prefix("include::")?;
+            let (target, attrs) = rest.split_once('[')?;
+            attrs.trim_end().ends_with(']').then_some(target)
+        })
+        .collect()
+}
+
+/// Resolve an include target against the content-dir-relative path of the
+/// file containing the directive. Returns the normalized content-dir-relative
+/// path of the target, or `None` when the target cannot be statically proven
+/// to stay inside the content directory: absolute paths, `..` escapes past
+/// the content root, URLs / Windows drive letters (`:`), backslashes, and
+/// attribute references (`{attr}`) are all rejected.
+pub fn resolve_include_target(includer_path: &str, target: &str) -> Option<String> {
+    if target.is_empty()
+        || target.starts_with('/')
+        || target.contains(':')
+        || target.contains('\\')
+        || target.contains('{')
+    {
+        return None;
+    }
+    let mut parts: Vec<&str> = match includer_path.rsplit_once('/') {
+        Some((dir, _)) => dir.split('/').collect(),
+        None => Vec::new(),
+    };
+    for seg in target.split('/') {
+        match seg {
+            "" => return None,
+            "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            seg => parts.push(seg),
+        }
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    Some(parts.join("/"))
+}
+
 // ============================================================================
 // Result types
 // ============================================================================
@@ -46,7 +114,12 @@ pub enum ParseResult {
 #[allow(async_fn_in_trait)]
 #[vox::service]
 pub trait AsciiDocProcessor {
-    async fn parse_and_render(&self, source_path: String, content: String) -> ParseResult;
+    async fn parse_and_render(
+        &self,
+        source_path: String,
+        content: String,
+        includes: Vec<IncludeFile>,
+    ) -> ParseResult;
 }
 
 #[cfg(test)]
@@ -83,5 +156,54 @@ mod tests {
             }
             other => panic!("expected object, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn scan_finds_line_leading_directives_only() {
+        let content = "= Doc\n\ninclude::partials/_a.adoc[]\n text include::no.adoc[]\n\\include::escaped.adoc[]\ninclude::snippets/code.adoc[lines=1..3]\ninclude::unterminated.adoc\n";
+        assert_eq!(
+            scan_include_targets(content),
+            vec!["partials/_a.adoc", "snippets/code.adoc"]
+        );
+    }
+
+    #[test]
+    fn resolve_relative_to_includer_dir() {
+        assert_eq!(
+            resolve_include_target("posts/git.adoc", "_parts/setup.adoc"),
+            Some("posts/_parts/setup.adoc".to_string())
+        );
+        assert_eq!(
+            resolve_include_target("page.adoc", "shared.adoc"),
+            Some("shared.adoc".to_string())
+        );
+        assert_eq!(
+            resolve_include_target("a/b/c.adoc", "../sibling.adoc"),
+            Some("a/sibling.adoc".to_string())
+        );
+        assert_eq!(
+            resolve_include_target("a/b/c.adoc", "./d.adoc"),
+            Some("a/b/d.adoc".to_string())
+        );
+    }
+
+    #[test]
+    fn resolve_rejects_escapes_and_dynamic_targets() {
+        // absolute path
+        assert_eq!(resolve_include_target("posts/p.adoc", "/etc/passwd"), None);
+        // escape past content root
+        assert_eq!(resolve_include_target("posts/p.adoc", "../../x.adoc"), None);
+        assert_eq!(resolve_include_target("p.adoc", "../x.adoc"), None);
+        // URLs and Windows drive letters
+        assert_eq!(
+            resolve_include_target("p.adoc", "https://example.com/x.adoc"),
+            None
+        );
+        assert_eq!(resolve_include_target("p.adoc", "C:\\x.adoc"), None);
+        // attribute references cannot be statically verified
+        assert_eq!(resolve_include_target("p.adoc", "{partialsdir}/x.adoc"), None);
+        // empty / directory-only targets
+        assert_eq!(resolve_include_target("p.adoc", ""), None);
+        assert_eq!(resolve_include_target("posts/p.adoc", ".."), None);
     }
 }

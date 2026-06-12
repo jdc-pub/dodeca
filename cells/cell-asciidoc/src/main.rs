@@ -9,24 +9,100 @@ use std::time::Instant;
 #[derive(Clone)]
 pub struct AsciiDocProcessorImpl;
 
+/// Reject documents whose `include::` targets cannot be statically proven to
+/// stay inside the content directory. acdc's preprocessor resolves include
+/// paths eagerly with no safe-mode enforcement for file targets, so this
+/// check must run before any parsing touches the filesystem.
+fn unsafe_include_error(
+    source_path: &str,
+    content: &str,
+    includes: &[IncludeFile],
+) -> Option<String> {
+    if resolve_include_target("", source_path).as_deref() != Some(source_path) {
+        return Some(format!(
+            "invalid source path {source_path:?}: must be a normalized relative path"
+        ));
+    }
+    let files = std::iter::once((source_path, content))
+        .chain(includes.iter().map(|f| (f.path.as_str(), f.content.as_str())));
+    for (path, text) in files {
+        for target in scan_include_targets(text) {
+            if resolve_include_target(path, target).is_none() {
+                return Some(format!(
+                    "unsafe include target {target:?} in {path}: include targets must be \
+                     relative paths that stay inside the content directory"
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// Materialize the document and its includes into a temp directory mirroring
+/// their content-dir-relative layout, then parse from there. The temp dir is
+/// the only filesystem the parse can see legitimate targets in; combined with
+/// `unsafe_include_error` this keeps include resolution hermetic.
+fn parse_in_tempdir(
+    source_path: &str,
+    content: &str,
+    includes: &[IncludeFile],
+    opts: &acdc_parser::Options,
+) -> Result<acdc_parser::ParseResult, String> {
+    let dir = tempfile::tempdir()
+        .map_err(|e| format!("failed to create temp dir for include resolution: {e}"))?;
+    let files = std::iter::once((source_path, content))
+        .chain(includes.iter().map(|f| (f.path.as_str(), f.content.as_str())));
+    for (path, text) in files {
+        let abs = dir.path().join(path);
+        if let Some(parent) = abs.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+        }
+        std::fs::write(&abs, text).map_err(|e| format!("failed to write {path}: {e}"))?;
+    }
+    acdc_parser::parse_file(dir.path().join(source_path), opts).map_err(|e| e.to_string())
+}
+
 impl AsciiDocProcessor for AsciiDocProcessorImpl {
-    async fn parse_and_render(&self, source_path: String, content: String) -> ParseResult {
+    async fn parse_and_render(
+        &self,
+        source_path: String,
+        content: String,
+        includes: Vec<IncludeFile>,
+    ) -> ParseResult {
         let started_at = Instant::now();
         tracing::debug!(
             source_path = %source_path,
             content_len = content.len(),
+            include_count = includes.len(),
             "asciidoc cell parse_and_render started"
         );
 
+        if let Some(message) = unsafe_include_error(&source_path, &content, &includes) {
+            return ParseResult::Error { message };
+        }
+
         let parse_opts = acdc_parser::Options::default();
-        let parsed = match acdc_parser::parse(&content, &parse_opts) {
-            Ok(p) => p,
-            Err(e) => {
-                return ParseResult::Error {
-                    message: e.to_string(),
-                };
+        let has_includes = !scan_include_targets(&content).is_empty()
+            || includes.iter().any(|f| !scan_include_targets(&f.content).is_empty());
+        let parsed = if has_includes {
+            match parse_in_tempdir(&source_path, &content, &includes, &parse_opts) {
+                Ok(p) => p,
+                Err(message) => return ParseResult::Error { message },
+            }
+        } else {
+            match acdc_parser::parse(&content, &parse_opts) {
+                Ok(p) => p,
+                Err(e) => {
+                    return ParseResult::Error {
+                        message: e.to_string(),
+                    };
+                }
             }
         };
+        for warning in parsed.warnings() {
+            tracing::warn!(source_path = %source_path, "asciidoc: {warning}");
+        }
         let doc = parsed.document();
 
         // Extract title from header
@@ -119,7 +195,7 @@ impl AsciiDocProcessor for AsciiDocProcessorImpl {
         let processor = Processor::new_with_variant(
             converter_opts,
             doc.attributes.clone(),
-            HtmlVariant::Standard,
+            HtmlVariant::Semantic,
         );
         let render_opts = RenderOptions {
             embedded: true,
@@ -164,7 +240,13 @@ mod tests {
 
     async fn render(content: &str) -> ParseResult {
         AsciiDocProcessorImpl
-            .parse_and_render("test.adoc".to_string(), content.to_string())
+            .parse_and_render("test.adoc".to_string(), content.to_string(), Vec::new())
+            .await
+    }
+
+    async fn render_at(source_path: &str, content: &str, includes: Vec<IncludeFile>) -> ParseResult {
+        AsciiDocProcessorImpl
+            .parse_and_render(source_path.to_string(), content.to_string(), includes)
             .await
     }
 
@@ -288,5 +370,68 @@ mod tests {
             combined.contains("li") && combined.contains("margin-bottom"),
             "head_injections must normalize li > p margin; got: {combined:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn include_directive_inlines_supplied_partial() {
+        let content = "= Doc\n\ninclude::_parts/body.adoc[]\n";
+        let includes = vec![IncludeFile {
+            path: "_parts/body.adoc".to_string(),
+            content: "Included paragraph from partial.".to_string(),
+        }];
+        let result = render_at("posts/page.adoc", content, includes).await;
+        let ParseResult::Success { html, .. } = result else {
+            panic!("expected Success, got {result:?}");
+        };
+        assert!(
+            html.contains("Included paragraph from partial."),
+            "partial content must be inlined; got: {html}"
+        );
+    }
+
+    #[tokio::test]
+    async fn nested_include_relative_to_partial_dir() {
+        // page includes _parts/a.adoc, which itself includes b.adoc (a sibling).
+        let content = "= Doc\n\ninclude::_parts/a.adoc[]\n";
+        let includes = vec![
+            IncludeFile {
+                path: "_parts/a.adoc".to_string(),
+                content: "From A.\n\ninclude::b.adoc[]\n".to_string(),
+            },
+            IncludeFile {
+                path: "_parts/b.adoc".to_string(),
+                content: "From B.".to_string(),
+            },
+        ];
+        let result = render_at("page.adoc", content, includes).await;
+        let ParseResult::Success { html, .. } = result else {
+            panic!("expected Success, got {result:?}");
+        };
+        assert!(html.contains("From A."), "A missing: {html}");
+        assert!(html.contains("From B."), "nested include B missing: {html}");
+    }
+
+    #[tokio::test]
+    async fn unsafe_include_target_is_rejected() {
+        let content = "= Doc\n\ninclude::../../../etc/passwd[]\n";
+        let result = render_at("posts/page.adoc", content, Vec::new()).await;
+        let ParseResult::Error { message } = result else {
+            panic!("expected Error for path-escaping include, got {result:?}");
+        };
+        assert!(
+            message.contains("unsafe include target"),
+            "error must name the unsafe target; got: {message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_includes_skips_tempdir_path() {
+        // A document with no include directives must still render via the
+        // in-memory path (regression guard on the has_includes branch).
+        let result = render_at("page.adoc", "= Doc\n\nPlain body.\n", Vec::new()).await;
+        let ParseResult::Success { html, .. } = result else {
+            panic!("expected Success");
+        };
+        assert!(html.contains("Plain body."), "got: {html}");
     }
 }
