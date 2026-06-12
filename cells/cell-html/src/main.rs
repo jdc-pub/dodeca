@@ -1504,23 +1504,55 @@ fn inject_code_buttons_in_doc(
                     let code_text = get_text_content(doc, node_id);
                     let normalized = normalize_code_for_matching(&code_text);
 
-                    ensure_position_relative(doc, node_id);
-                    // Add code-block class so CSS selectors (.code-block .copy-btn,
-                    // .code-block:hover .copy-btn) apply even when there is no wrapping div.
-                    // This covers AsciiDoc output where <pre> is not wrapped in .code-block.
-                    let existing = get_attr(doc, node_id, "class").unwrap_or_default();
-                    if !existing.split_whitespace().any(|c| c == "code-block") {
-                        let new_class = format!("{} code-block", existing).trim().to_string();
-                        set_attr(doc, node_id, "class", &new_class);
-                    }
+                    // Check if a <code> child carries a data-lang attribute (AsciiDoc output).
+                    let lang = doc.children(node_id).find_map(|child_id| {
+                        if is_element(doc, child_id, "code") {
+                            get_attr(doc, child_id, "data-lang")
+                        } else {
+                            None
+                        }
+                    });
 
-                    // Create and append buttons
-                    if let Some(meta) = code_metadata.get(&normalized) {
-                        let btn = create_build_info_button(doc, meta);
-                        doc.append_child(node_id, btn);
+                    if let Some(ref lang) = lang {
+                        // Wrap the <pre> in a <div class="code-block"> with a language header,
+                        // mirroring the structure that Markdown-rendered code blocks already have.
+                        let wrapper = doc.create_element("div");
+                        set_attr(doc, wrapper, "class", "code-block");
+                        set_attr(doc, wrapper, "data-lang", lang);
+                        ensure_position_relative(doc, wrapper);
+
+                        let header = doc.create_element("div");
+                        set_attr(doc, header, "class", "code-header");
+                        let header_text = doc.create_text(lang.clone());
+                        doc.append_child(header, header_text);
+
+                        doc.insert_before(node_id, wrapper);
+                        doc.append_child(wrapper, header);
+                        doc.append_child(wrapper, node_id);
+
+                        // Create and append buttons to the wrapper (not inside <pre>)
+                        if let Some(meta) = code_metadata.get(&normalized) {
+                            let btn = create_build_info_button(doc, meta);
+                            doc.append_child(wrapper, btn);
+                        }
+                        let copy_btn = create_copy_button(doc);
+                        doc.append_child(wrapper, copy_btn);
+                    } else {
+                        ensure_position_relative(doc, node_id);
+                        // No language — keep the simpler structure: add code-block class to <pre>.
+                        let existing = get_attr(doc, node_id, "class").unwrap_or_default();
+                        if !existing.split_whitespace().any(|c| c == "code-block") {
+                            let new_class = format!("{} code-block", existing).trim().to_string();
+                            set_attr(doc, node_id, "class", &new_class);
+                        }
+
+                        if let Some(meta) = code_metadata.get(&normalized) {
+                            let btn = create_build_info_button(doc, meta);
+                            doc.append_child(node_id, btn);
+                        }
+                        let copy_btn = create_copy_button(doc);
+                        doc.append_child(node_id, copy_btn);
                     }
-                    let copy_btn = create_copy_button(doc);
-                    doc.append_child(node_id, copy_btn);
 
                     had_buttons = true;
                 }
@@ -1746,10 +1778,38 @@ mod tests {
 
     // AsciiDoc renders code blocks as:
     //   <div class="listingblock"><div class="content"><pre class="highlight"><code>...</code></pre></div></div>
-    // The copy button ends up inside <pre>, so <pre> must have `code-block` class for the CSS
-    // selectors (.code-block .copy-btn, .code-block:hover .copy-btn) to apply.
+    // When the <code> child carries data-lang, the <pre> should be wrapped in a <div class="code-block">
+    // with a <div class="code-header"> showing the language — matching Markdown's structure.
+    // Without data-lang, the simpler fallback adds code-block class directly to <pre>.
     #[test]
-    fn pre_with_code_child_gets_code_block_class() {
+    fn pre_with_lang_gets_wrapper_div_and_header() {
+        let html = r#"<html><head></head><body>
+            <div class="listingblock">
+              <div class="content">
+                <pre class="highlight"><code class="language-shell" data-lang="shell">echo hi</code></pre>
+              </div>
+            </div>
+        </body></html>"#;
+        let tendril = StrTendril::from(html);
+        let mut doc = hotmeal::parse(&tendril);
+        inject_code_buttons_in_doc(&mut doc, &HashMap::new());
+        let output = doc.to_html();
+        assert!(
+            output.contains(r#"class="code-block""#),
+            "wrapper div should have code-block class; got: {output}"
+        );
+        assert!(
+            output.contains(r#"data-lang="shell""#),
+            "wrapper div should have data-lang attribute; got: {output}"
+        );
+        assert!(
+            output.contains(r#"class="code-header""#),
+            "header div should be present; got: {output}"
+        );
+    }
+
+    #[test]
+    fn pre_without_lang_gets_code_block_class() {
         let html = r#"<html><head></head><body>
             <div class="listingblock">
               <div class="content">

@@ -1088,10 +1088,9 @@ mod tests {
         CodeExecutionMetadata, CodeExecutionResult, DependencySourceInfo, ResolvedDependencyInfo,
     };
 
-    // When cell-html adds `code-block` class to a bare <pre> (AsciiDoc output),
-    // site CSS like `.code-block { overflow: hidden }` overrides `pre { overflow-x: auto }`.
-    // COPY_BUTTON_STYLES must explicitly restore overflow-x: auto on pre.code-block
-    // so horizontal scrolling works on AsciiDoc code blocks.
+    // For AsciiDoc code blocks without a language, cell-html adds `code-block` class directly
+    // to the bare <pre>. Site CSS like `.code-block { overflow: hidden }` would then override
+    // `pre { overflow-x: auto }`, so COPY_BUTTON_STYLES must explicitly restore it.
     #[test]
     fn copy_button_styles_restores_overflow_on_pre_code_block() {
         assert!(
