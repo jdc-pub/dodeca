@@ -702,6 +702,7 @@ pub async fn parse_and_render_markdown_cell(
 pub async fn parse_and_render_asciidoc_cell(
     source_path: &str,
     content: &str,
+    includes: Vec<cell_asciidoc_proto::IncludeFile>,
 ) -> Result<cell_asciidoc_proto::ParseResult, MarkdownParseError> {
     let rpc_id = next_cell_rpc_id();
     let started_at = Instant::now();
@@ -711,6 +712,7 @@ pub async fn parse_and_render_asciidoc_cell(
         method = "parse_and_render",
         source_path,
         source_len = content.len(),
+        include_count = includes.len(),
         "cell rpc client lookup starting"
     );
     let client = asciidoc_cell().await.ok_or_else(|| MarkdownParseError {
@@ -724,7 +726,7 @@ pub async fn parse_and_render_asciidoc_cell(
         "cell rpc dispatch starting"
     );
     client
-        .parse_and_render(source_path.to_string(), content.to_string())
+        .parse_and_render(source_path.to_string(), content.to_string(), includes)
         .await
         .map(|result| {
             tracing::debug!(

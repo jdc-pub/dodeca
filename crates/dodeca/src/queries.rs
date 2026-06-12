@@ -340,13 +340,60 @@ pub async fn parse_file<DB: Db>(db: &DB, source: SourceFile) -> PicanteResult<Pa
     tracing::Span::current().record("path", path.as_str());
 
     if path.is_asciidoc() {
-        parse_file_asciidoc(path, content, last_modified).await
+        parse_file_asciidoc(db, path, content, last_modified).await
     } else {
         parse_file_markdown(db, path, content, last_modified).await
     }
 }
 
-async fn parse_file_asciidoc(
+/// Collect the transitive set of `include::` partials referenced by an
+/// AsciiDoc document, drawn from the source registry so each partial becomes
+/// a tracked picante dependency (editing a partial reparses its includers).
+/// Unsafe or unresolvable targets are skipped here and rejected authoritatively
+/// by the cell via the shared [`cell_asciidoc_proto::resolve_include_target`].
+fn gather_asciidoc_includes<DB: Db>(
+    db: &DB,
+    root_path: &str,
+    root_content: &str,
+) -> PicanteResult<Vec<cell_asciidoc_proto::IncludeFile>> {
+    use cell_asciidoc_proto::{IncludeFile, resolve_include_target, scan_include_targets};
+    use std::collections::{HashSet, VecDeque};
+
+    let by_path: HashMap<String, SourceFile> = SourceRegistry::sources(db)?
+        .unwrap_or_default()
+        .iter()
+        .map(|s| Ok((s.path(db)?.to_string(), *s)))
+        .collect::<PicanteResult<_>>()?;
+
+    let mut out = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut queue: VecDeque<(String, String)> =
+        VecDeque::from([(root_path.to_string(), root_content.to_string())]);
+
+    while let Some((includer, text)) = queue.pop_front() {
+        for target in scan_include_targets(&text) {
+            let Some(resolved) = resolve_include_target(&includer, target) else {
+                continue;
+            };
+            if !seen.insert(resolved.clone()) {
+                continue;
+            }
+            let Some(source) = by_path.get(&resolved) else {
+                continue;
+            };
+            let partial = source.content(db)?.to_string();
+            queue.push_back((resolved.clone(), partial.clone()));
+            out.push(IncludeFile {
+                path: resolved,
+                content: partial,
+            });
+        }
+    }
+    Ok(out)
+}
+
+async fn parse_file_asciidoc<DB: Db>(
+    db: &DB,
     path: std::sync::Arc<crate::types::SourcePath>,
     content: crate::types::SourceContent,
     last_modified: i64,
@@ -355,8 +402,10 @@ async fn parse_file_asciidoc(
 
     tracing::debug!(path = %path, "Parsing asciidoc");
 
+    let includes = gather_asciidoc_includes(db, path.as_str(), content.as_str())?;
+
     let parse_result =
-        match parse_and_render_asciidoc_cell(path.as_str(), content.as_str()).await {
+        match parse_and_render_asciidoc_cell(path.as_str(), content.as_str(), includes).await {
             Ok(p) => p,
             Err(e) => return Ok(Err(e)),
         };
